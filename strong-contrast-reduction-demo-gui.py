@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone two-endpoint contrast reduction explorer (Python 3.10+).
+"""Standalone contrast reduction explorer with a minimum gain (Python 3.10+).
 
 Install: python -m pip install customtkinter matplotlib numpy
 Run:     python layer_contrast_gui.py
@@ -9,13 +9,12 @@ Plots independent detail-layer response curves, not an image decomposition.
 No VSOLImage dependency. No percentile normalization. All magnitudes are raw.
 Global sliders SET the corresponding parameter on every active layer.
 Vertical sliders are grouped by parameter, with ALL followed by each layer.
-Each layer has exactly two parameters: unity_x and zero_x.
-Gain is 1 through unity_x and 0 from zero_x onward, with a cubic smoothstep
-transition between them. This replaces the original asymptotic exponential
-so that gain can reach exactly zero at a finite input magnitude.
+Each layer has three parameters: unity_x, minimum_x, and min_gain.
+Gain is 1 through unity_x and min_gain from minimum_x onward, with a cubic
+smoothstep transition between them. min_gain ranges from 0 to 1.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import argparse
 import math
 import sys
@@ -26,43 +25,50 @@ import numpy as np
 @dataclass
 class Layer:
     unity_x: float = 2.0
-    zero_x: float = 4.0
+    minimum_x: float = 4.0
+    min_gain: float = 0.0
 
 
 def layer_gain(x, layer):
-    """Smooth, monotone gain with exact unity and zero endpoints.
+    """Smooth, monotone gain with exact unity and minimum-gain endpoints.
 
-    t = clip((abs(x) - unity_x) / (zero_x - unity_x), 0, 1)
-    gain = 1 - 3*t**2 + 2*t**3
+    t = clip((abs(x) - unity_x) / (minimum_x - unity_x), 0, 1)
+    gain = min_gain + (1 - min_gain) * (1 - 3*t**2 + 2*t**3)
     The factored equivalent below is more stable near zero gain.
     """
-    if (not all(math.isfinite(v) for v in (layer.unity_x, layer.zero_x))
-            or not 0 <= layer.unity_x < layer.zero_x):
-        raise ValueError("Require 0 <= gain-1 x < gain-0 x, both finite.")
+    if (not all(math.isfinite(v) for v in (layer.unity_x, layer.minimum_x, layer.min_gain))
+            or not 0 <= layer.unity_x < layer.minimum_x
+            or not 0 <= layer.min_gain <= 1):
+        raise ValueError("Require 0 <= start x < end x and 0 <= minimum gain <= 1, all finite.")
     magnitude = np.abs(np.asarray(x, dtype=np.float64))
     if not np.all(np.isfinite(magnitude)):
         raise ValueError("Detail values must be finite.")
     # Clip before division to avoid overflow for huge inputs and narrow spans.
-    position = np.clip(magnitude, layer.unity_x, layer.zero_x)
-    t = (position - layer.unity_x) / (layer.zero_x - layer.unity_x)
-    return (1 - t) ** 2 * (1 + 2 * t)
+    position = np.clip(magnitude, layer.unity_x, layer.minimum_x)
+    t = (position - layer.unity_x) / (layer.minimum_x - layer.unity_x)
+    smooth = (1 - t) ** 2 * (1 + 2 * t)
+    gain = layer.min_gain + (1 - layer.min_gain) * smooth
+    return np.where(magnitude <= layer.unity_x, 1.0,
+                    np.where(magnitude >= layer.minimum_x, layer.min_gain, gain))
 
 
-def adjust_endpoint(layer, key, value, maximum):
-    """Move one endpoint, nudging its partner only if they would cross."""
-    if key not in ("unity_x", "zero_x"):
-        raise ValueError("Unknown endpoint.")
+def adjust_control(layer, key, value, maximum):
+    """Set the floor or move one endpoint, nudging its partner if needed."""
+    if key not in ("unity_x", "minimum_x", "min_gain"):
+        raise ValueError("Unknown control.")
     if not math.isfinite(value) or not math.isfinite(maximum) or maximum <= 0:
-        raise ValueError("Endpoint and slider maximum must be finite; maximum > 0.")
+        raise ValueError("Control and slider maximum must be finite; maximum > 0.")
+    if key == "min_gain":
+        return Layer(layer.unity_x, layer.minimum_x, min(max(value, 0.0), 1.0))
     gap = maximum * 1e-4
-    unity, zero = layer.unity_x, layer.zero_x
+    unity, end = layer.unity_x, layer.minimum_x
     if key == "unity_x":
         unity = min(max(value, 0.0), maximum - gap)
-        zero = max(zero, unity + gap)
+        end = max(end, unity + gap)
     else:
-        zero = min(max(value, gap), maximum)
-        unity = min(unity, zero - gap)
-    return Layer(unity, zero)
+        end = min(max(value, gap), maximum)
+        unity = min(unity, end - gap)
+    return Layer(unity, end, layer.min_gain)
 
 
 def create_app():
@@ -77,7 +83,7 @@ def create_app():
     ctk.set_default_color_theme("blue")
 
     class Control(ctk.CTkFrame):
-        """Vertical channel strip with a raw-magnitude scale."""
+        """Vertical channel strip with a linear parameter scale."""
         def __init__(self, parent, label, value, maximum, command, color=None):
             super().__init__(parent, fg_color="transparent")
             self.command = command
@@ -105,7 +111,7 @@ def create_app():
             self.geometry("1500x950")
             self.minsize(1200, 750)
             self.layers = [Layer() for _ in range(4)]
-            self.global_values = {"unity_x": 2.0, "zero_x": 4.0}
+            self.global_values = asdict(Layer())
             self.xmax = 4.0
             self.pending = None
             self.layer_controls = []
@@ -131,7 +137,7 @@ def create_app():
             self.parameter_groups = ctk.CTkFrame(self.sidebar, fg_color="transparent")
             self.parameter_groups.grid(row=3, column=0, sticky="ew", pady=5)
             self.parameter_groups.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(self.sidebar, text="Gain = 1 below the first endpoint; gain = 0 above the second.\nA smooth decrease is generated between them automatically.\nIf endpoints cross, the other endpoint moves to keep their order.",
+            ctk.CTkLabel(self.sidebar, text="Gain = 1 below the first endpoint; minimum gain above the second.\nA smooth decrease is generated between them automatically.\nMinimum gain: 0 = full suppression; 1 = unchanged.\nIf endpoints cross, the other endpoint moves to keep their order.",
                          justify="left", anchor="w", text_color="#93a4b8").grid(row=4, column=0, sticky="ew", padx=8)
 
             right = ctk.CTkFrame(self)
@@ -164,12 +170,13 @@ def create_app():
 
         def slider_maximum(self):
             # Changing the viewing range must not change existing endpoints.
-            return max(self.xmax, *self.global_values.values(),
-                       *(layer.zero_x for layer in self.layers))
+            return max(self.xmax, self.global_values["unity_x"], self.global_values["minimum_x"],
+                       *(layer.minimum_x for layer in self.layers))
 
         def specs(self):
             return [("unity_x", "x where gain is still 1 · decrease starts"),
-                    ("zero_x", "x where gain reaches 0 · decrease ends")]
+                    ("minimum_x", "x where gain reaches minimum · decrease ends"),
+                    ("min_gain", "Minimum gain · 0 to 1")]
 
         def color(self, index):
             return colormaps["tab20"](index / 19)
@@ -181,8 +188,8 @@ def create_app():
             self.layer_controls = [{} for _ in self.layers]
             self.control_maximum = self.slider_maximum()
             for row, (key, label) in enumerate(self.specs()):
-                # Both groups and all layers share the same x scale.
-                maximum = self.control_maximum
+                # Endpoint groups share an x scale; minimum gain uses [0, 1].
+                maximum = 1.0 if key == "min_gain" else self.control_maximum
                 group = ctk.CTkFrame(self.parameter_groups)
                 group.grid(row=row, column=0, sticky="ew", padx=4, pady=5)
                 group.grid_columnconfigure(1, weight=1)
@@ -210,17 +217,17 @@ def create_app():
             self.schedule_plot()
 
         def set_all(self, key, value):
-            master = adjust_endpoint(Layer(**self.global_values), key, value, self.control_maximum)
-            self.global_values = {"unity_x": master.unity_x, "zero_x": master.zero_x}
+            master = adjust_control(Layer(**self.global_values), key, value, self.control_maximum)
+            self.global_values = asdict(master)
             for endpoint, control in self.global_controls.items():
                 control.set(self.global_values[endpoint])
             for index, layer in enumerate(self.layers):
-                self.layers[index] = adjust_endpoint(layer, key, value, self.control_maximum)
+                self.layers[index] = adjust_control(layer, key, value, self.control_maximum)
                 self.sync_layer_controls(index)
             self.schedule_plot()
 
         def set_layer(self, index, key, value):
-            self.layers[index] = adjust_endpoint(self.layers[index], key, value, self.control_maximum)
+            self.layers[index] = adjust_control(self.layers[index], key, value, self.control_maximum)
             self.sync_layer_controls(index)
             self.schedule_plot()
 
@@ -251,7 +258,7 @@ def create_app():
                 self.pending = None
             # Sample every transition separately, even when it is very narrow.
             x = np.unique(np.concatenate((np.linspace(0, self.xmax, 1600),
-                *(np.linspace(layer.unity_x, min(layer.zero_x, self.xmax), 100)
+                *(np.linspace(layer.unity_x, min(layer.minimum_x, self.xmax), 100)
                   for layer in self.layers if layer.unity_x <= self.xmax))))
             for ax in self.axes:
                 ax.clear()
@@ -266,12 +273,12 @@ def create_app():
             for index, layer in enumerate(self.layers):
                 gain = layer_gain(x, layer)
                 self.axes[0].plot(x, gain, color=self.color(index), label=f"L{index + 1}", lw=1.8)
-                self.axes[0].plot([layer.unity_x, layer.zero_x], [1, 0], linestyle="none",
+                self.axes[0].plot([layer.unity_x, layer.minimum_x], [1, layer.min_gain], linestyle="none",
                                   marker="o", ms=4, color=self.color(index), clip_on=True)
                 self.axes[1].plot(x, x * gain, color=self.color(index), lw=1.8)
             self.axes[0].axhline(1, color="#c4cbd5", ls="--", lw=1, alpha=0.7)
             self.axes[1].plot([0, self.xmax], [0, self.xmax], color="#c4cbd5", ls="--", lw=1, alpha=0.7)
-            self.axes[0].set_title("Gain per layer · dots mark gain = 1 and gain = 0", loc="left", fontsize=12)
+            self.axes[0].set_title("Gain per layer · dots mark unity and minimum gain", loc="left", fontsize=12)
             self.axes[0].set_ylabel("Gain · output / input")
             self.axes[0].set_ylim(-0.05, 1.12)
             self.axes[1].set_title("Output magnitude · dashed line = unchanged", loc="left", fontsize=12)
@@ -282,7 +289,7 @@ def create_app():
             self.axes[0].legend(loc="upper right", ncol=min(4, len(self.layers)), fontsize=8,
                                 facecolor="#202939", edgecolor="#3e485a", labelcolor="#dce4ef")
             self.status.configure(text=f"{len(self.layers)} independent layers · matching curves overlap. "
-                                  "Smooth transition from exactly 1 to exactly 0.\n"
+                                  "Smooth transition from 1 to each layer's minimum gain.\n"
                                   "Output = input × gain. This curve can turn downward as strong details are suppressed. "
                                   "Raw magnitudes; no percentile normalization.")
             self.canvas.draw_idle()
@@ -303,7 +310,7 @@ def create_app():
 def self_test():
     """Exercise the numerical behavior without a GUI or VSOLImage."""
     x = np.array([-100., -4., -3., -2., 0., 2., 3., 4., 100.])
-    layer = Layer(unity_x=2, zero_x=4)
+    layer = Layer(unity_x=2, minimum_x=4)
     gain = layer_gain(x, layer)
     np.testing.assert_allclose(gain, gain[::-1])
     assert np.all(gain[np.abs(x) <= 2] == 1)
@@ -324,12 +331,12 @@ def self_test():
     # Dragging either slider through its partner or to a limit stays valid.
     for maximum in (1e-6, 4, 1e6):
         current = Layer(maximum / 4, maximum * 3 / 4)
-        for key in ("unity_x", "zero_x"):
+        for key in ("unity_x", "minimum_x"):
             for value in (0, maximum, maximum / 2, -maximum, maximum * 2):
-                current = adjust_endpoint(current, key, value, maximum)
-                assert 0 <= current.unity_x < current.zero_x <= maximum
+                current = adjust_control(current, key, value, maximum)
+                assert 0 <= current.unity_x < current.minimum_x <= maximum
                 np.testing.assert_array_equal(
-                    layer_gain([current.unity_x, current.zero_x], current), [1, 0])
+                    layer_gain([current.unity_x, current.minimum_x], current), [1, 0])
     for invalid in (Layer(2, 2), Layer(4, 2), Layer(-1, 2), Layer(0, math.inf)):
         try:
             layer_gain(x, invalid)
@@ -337,7 +344,30 @@ def self_test():
             pass
         else:
             raise AssertionError("Invalid endpoints were accepted")
-    print("PASS: exact endpoints, monotonicity, symmetry, smooth joins, raw units, and slider ordering.")
+    # The floor is reached exactly at the end and remains constant thereafter.
+    for floor in (0.0, 0.2, 0.7, 1.0):
+        layer = Layer(2, 4, floor)
+        values = np.linspace(0, 8, 10001)
+        gains = layer_gain(values, layer)
+        np.testing.assert_array_equal(layer_gain([0, 2, 4, 8], layer), [1, 1, floor, floor])
+        np.testing.assert_allclose(layer_gain(3, layer), (1 + floor) / 2)
+        assert np.all((gains >= floor) & (gains <= 1))
+        assert np.all(np.diff(gains) <= 1e-14)
+        np.testing.assert_allclose(layer_gain(-values, layer), gains)
+        for key in ("unity_x", "minimum_x"):
+            assert adjust_control(layer, key, 3, 4).min_gain == floor
+        for new_floor in (-1, 0, 0.4, 1, 2):
+            moved = adjust_control(layer, "min_gain", new_floor, 4)
+            assert (moved.unity_x, moved.minimum_x) == (2, 4)
+            assert moved.min_gain == min(max(new_floor, 0), 1)
+    for floor in (-0.1, 1.1, math.nan, math.inf):
+        try:
+            layer_gain(x, Layer(2, 4, floor))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid minimum gain was accepted")
+    print("PASS: endpoints, minimum-gain floor, monotonicity, symmetry, smooth joins, raw units, and slider ordering.")
 
 
 def main():
