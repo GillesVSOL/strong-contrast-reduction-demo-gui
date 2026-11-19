@@ -87,13 +87,13 @@ def create_app():
         def __init__(self, parent, label, value, maximum, command, color=None):
             super().__init__(parent, fg_color="transparent")
             self.command = command
-            ctk.CTkLabel(self, text=label, width=60, text_color=color or "#dce4ef",
+            ctk.CTkLabel(self, text=label, width=33, text_color=color or "#dce4ef",
                          font=ctk.CTkFont(weight="bold")).grid(row=0, column=0)
             options = {"button_color": color, "progress_color": color} if color else {}
             self.slider = ctk.CTkSlider(self, from_=0, to=maximum, command=self.changed,
                                        orientation="vertical", width=18, height=105, **options)
             self.slider.grid(row=1, column=0, pady=5)
-            self.value_label = ctk.CTkLabel(self, text="", width=60)
+            self.value_label = ctk.CTkLabel(self, text="", width=33)
             self.value_label.grid(row=2, column=0)
             self.set(value)
 
@@ -197,7 +197,7 @@ def create_app():
                              anchor="w").grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 0))
                 master = Control(group, "ALL", self.global_values[key], maximum,
                                  lambda value, k=key: self.set_all(k, value))
-                master.grid(row=1, column=0, sticky="n", padx=(8, 4), pady=(0, 18))
+                master.grid(row=1, column=0, sticky="n", padx=(3, 1), pady=(0, 18))
                 self.global_controls[key] = master
                 bank = ctk.CTkScrollableFrame(group, orientation="horizontal", height=175,
                                               width=420, fg_color="transparent")
@@ -206,7 +206,7 @@ def create_app():
                     color = "#" + "".join(f"{round(v * 255):02x}" for v in self.color(index)[:3])
                     control = Control(bank, f"L{index + 1}", getattr(layer, key), maximum,
                                       lambda value, i=index, k=key: self.set_layer(i, k, value), color=color)
-                    control.grid(row=0, column=index, sticky="n", padx=2)
+                    control.grid(row=0, column=index, sticky="n", padx=0)
                     self.layer_controls[index][key] = control
 
         def change_count(self, value):
