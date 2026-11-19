@@ -95,14 +95,14 @@ def create_app():
         "muted": "#c4c0ba",
         "border": "#606169",
         "track": "#505158",
-        "accent": "#ff9f43",
-        "hover": "#ffbb75",
-        "on_accent": "#21170e",
+        "accent": "#4da3ff",
+        "hover": "#78b9ff",
+        "on_accent": "#071a2d",
         "layer_last": "#d9d9d6",
         "reference": "#a8a8ad",
     }
     layer_palette = LinearSegmentedColormap.from_list(
-        "orange_gray", [colors["accent"], colors["layer_last"]])
+        "blue_gray", [colors["accent"], colors["layer_last"]])
     scrollbar_colors = {
         "scrollbar_button_color": colors["border"],
         "scrollbar_button_hover_color": colors["muted"],
