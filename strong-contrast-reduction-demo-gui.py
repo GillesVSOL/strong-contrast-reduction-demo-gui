@@ -179,7 +179,7 @@ def create_app():
                     ("min_gain", "Minimum gain · 0 to 1")]
 
         def color(self, index):
-            return colormaps["tab20"](index / 19)
+            return colormaps["viridis_r"](index / max(1, len(self.layers) - 1))
 
         def rebuild_groups(self):
             for widget in self.parameter_groups.winfo_children():
@@ -280,6 +280,8 @@ def create_app():
             self.axes[1].plot([0, self.xmax], [0, self.xmax], color="#c4cbd5", ls="--", lw=1, alpha=0.7)
             self.axes[0].set_title("Gain per layer · dots mark unity and minimum gain", loc="left", fontsize=12)
             self.axes[0].set_ylabel("Gain · output / input")
+            self.axes[0].tick_params(axis="x", labelbottom=True)
+            self.axes[0].set_xlabel("Input |detail| · raw units")
             self.axes[0].set_ylim(-0.05, 1.12)
             self.axes[1].set_title("Output magnitude · dashed line = unchanged", loc="left", fontsize=12)
             self.axes[1].set_ylabel("Output |detail| × gain")
