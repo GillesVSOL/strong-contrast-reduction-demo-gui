@@ -126,10 +126,14 @@ def create_app():
             self.set(value)
 
         def set(self, value):
+            value = round(float(value), 2)
             self.slider.set(value)
-            self.value_label.configure(text=f"{value:.5g}")
+            self.value_label.configure(text=f"{value:.2f}")
 
         def changed(self, value):
+            value = round(float(value), 2)
+            self.slider.set(value)
+            self.value_label.configure(text=f"{value:.2f}")
             self.command(value)
 
     class App(ctk.CTk):
