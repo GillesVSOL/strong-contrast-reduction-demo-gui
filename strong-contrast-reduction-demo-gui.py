@@ -321,10 +321,13 @@ def create_app():
             for index, layer in enumerate(self.layers):
                 gain = layer_gain(x, layer)
                 self.axes[0].plot(x, gain, color=self.color(index), label=f"L{index + 1}", lw=1.8)
-                self.axes[0].plot([layer.unity_x, layer.minimum_x],
-                                  layer_gain([layer.unity_x, layer.minimum_x], layer), linestyle="none",
+                endpoints = [layer.unity_x, layer.minimum_x]
+                endpoint_gain = layer_gain(endpoints, layer)
+                self.axes[0].plot(endpoints, endpoint_gain, linestyle="none",
                                   marker="o", ms=4, color=self.color(index), clip_on=True)
                 self.axes[1].plot(x, x * gain, color=self.color(index), lw=1.8)
+                self.axes[1].plot(endpoints, np.asarray(endpoints) * endpoint_gain, linestyle="none",
+                                  marker="o", ms=4, color=self.color(index), clip_on=True)
             self.axes[0].axhline(1, color=colors["reference"], ls="--", lw=1, alpha=0.7)
             self.axes[1].plot([0, self.xmax], [0, self.xmax], color=colors["reference"], ls="--", lw=1, alpha=0.7)
             self.axes[0].set_title("Gain per layer · dots mark slope-transition endpoints",
